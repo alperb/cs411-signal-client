@@ -18,7 +18,7 @@ import json
 
 API_URL = 'http://10.92.55.4:5000'
 
-stuID = #Enter Your ID
+stuID = 27846
 
 #Server's Identitiy public key
 IKey_Ser = # Use the values in the project description document to form the server's IK as a point on the EC. Note that the values should be in decimal.

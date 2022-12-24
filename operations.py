@@ -18,12 +18,13 @@ import json
 
 API_URL = 'http://10.92.55.4:5000'
 
-stuID = 28224 #Enter Your ID
+stuID = 27846 #Enter Your ID
 
 #Server's Identitiy public key
 IKey_Ser = 1.0 # dummy value # Use the values in the project description document to form the server's IK as a point on the EC. Note that the values should be in decimal.
 IKey_Pr = 1.0 # dummy value
 IKey_Pub = 1.0 # dummy value
+
 
 def IKRegReq(h,s,x,y):
     mes = {'ID':stuID, 'H': h, 'S': s, 'IKPUB.X': x, 'IKPUB.Y': y}
