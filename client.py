@@ -5,6 +5,7 @@ from Crypto import Random
 import math
 import requests
 import json
+import sys
 
 API_URL = 'http://10.92.55.4:5000'
 
@@ -58,10 +59,8 @@ class DigitalSignature:
         h_prime = int.from_bytes(SHA3_256.new(self.__to_bytes(v) + m).digest(), byteorder='big') % self.order
 
         if signature.h == h_prime:
-            print("Signature is valid.")
             return True
         else:
-            print("Signature is invalid.")
             return False
 
     def __to_bytes(self, n):
@@ -109,6 +108,7 @@ class SignalClient(object):
         else:
             print("Failed to register presigned keys.")
             print(f"Error: {res[1]}")
+            exit(1)
 
     def verify_server_code(self):
         self.code = int(input("\nEnter the code sent to your email: "))
@@ -120,6 +120,7 @@ class SignalClient(object):
         else:
             print("Failed to verify email code.")
             print(f"Error: {res[1]}")
+            exit(1)
     
     def register_identity(self):
         print(f"Signing student id ({self.student_id})...")
@@ -137,6 +138,7 @@ class SignalClient(object):
         else:
             print("Failed to register identity.")
             print(f"Error: {result[1]}")
+            exit(1)
 
     def verify_spk_from_server(self):
         concatted = int.from_bytes(
@@ -150,6 +152,7 @@ class SignalClient(object):
             print("Successfully verified server presigned key.")
         else:
             print("Failed to verify server presigned key.")
+            exit(1)
     
     def generate_otk(self):
         temp_s_point = Point(self.server_spk['SPKPUB.X'], self.server_spk['SPKPUB.Y'], self.digital_signature.curve, True)
@@ -260,24 +263,55 @@ class SignalClient(object):
             return True, res
 
 if __name__ == '__main__':
-    # ALPER KEYS
+
     key_pairs = {
         'public': {
-            'x': 0xa526ea93cc3020ab68d7f0335e080ce4c346c5b33b468f1ce40f45512243a052, 
-            'y': 0xcf0241c214effe9b3a866827f1f12a181bd0031053122662db5b6939abc1687f
+            'x': 28701497367022640130289250537955896782099551696302755325877744682765078207895, 
+            'y': 49339270188151535272034630999877713185302890512909296793540204079034592545843
         },
-        'private': 96707718587161152128678693218471196779043027882080173409020211074670724786738
+        'private': 50500477941066129494398694676172446863075332062335879609003429255992907483088
     }
 
-    #BILGAN KEYS
-    # key_pairs = {
-    #     'public': {
-    #         'x': 0xa526ea93cc3020ab68d7f0335e080ce4c346c5b33b468f1ce40f45512243a052, 
-    #         'y': 0xcf0241c214effe9b3a866827f1f12a181bd0031053122662db5b6939abc1687f
-    #     },
-    #     'private': 96707718587161152128678693218471196779043027882080173409020211074670724786738
-    # }
+    if len(sys.argv) < 2:
+        print("Usage: python3 client.py <student_id>")
+        exit(1)
 
-    client = SignalClient(28224, key_pairs)
+    student_id = int(sys.argv[1])
+
+    if len(sys.argv) > 2:
+        rcode = int(input('Please enter your recovery code: '))
+        mes = { 'ID': student_id, 'RCODE': rcode }
+        print('Resetting current keys...')
+        response = requests.delete('{}/{}'.format(API_URL, "ResetIK"), json = mes)		
+        if((response.ok) == False):
+            print('Failed to reset keys.')
+            print(response.json())
+            exit(1)
+        else:
+            print('Keys reset successfully.')
+        # Generate new keys
+        print(f'Generating new keys for student {student_id}...')
+        digsig = DigitalSignature()
+        generated = digsig.generate_keys()
+        key_pairs = {
+            'public': {
+                'x': generated.public.x,
+                'y': generated.public.y
+            },
+            'private': generated.private
+        }
+        print(f'Keys generated successfully.')
+
+        print('Writing keys to file...')
+        f = open('keys.txt', 'w')
+        s = f"""X: {key_pairs['public']['x']}
+Y: {key_pairs['public']['y']}
+P: {key_pairs['private']}
+"""
+        f.write(s)
+        f.close()
+        print('Keys written to `keys.txt` successfully.')
+
+    client = SignalClient(student_id, key_pairs)
     client.start()
     # client.reset_otks()
