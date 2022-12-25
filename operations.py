@@ -22,7 +22,7 @@ API_URL = 'http://10.92.55.4:5000'
 stuID = 27846 #Enter Your ID
 
 #Server's Identitiy public key
-IKey_Ser = 1.0 # dummy value # Use the values in the project description document to form the server's IK as a point on the EC. Note that the values should be in decimal.
+IKey_Ser = Point(0xce1a69ecc226f9e667856ce37a44e50dbea3d58e3558078baee8fe5e017a556d, 0x13ddaf97158206b1d80258d7f6a6880e7aaf13180e060bb1e94174e419a4a093, Curve.get_curve('secp256k1'), True)
 IKey_Pr = 1.0 # dummy value
 IKey_Pub = 1.0
 
@@ -138,24 +138,17 @@ def step3():
 #Verify SPK from server
 def step4(SPK_S_x, SPK_S_y, h_S, s_S, SPK_Pr, SPK_Pub):
     # Verification of SPK
-    concatted = int.from_bytes(SPK_S_x.to_bytes((SPK_S_x.bit_length()+7)//8, byteorder='big') + SPK_S_y.to_bytes((SPK_S_y.bit_length()+7)//8, byteorder='big'), byteorder='big')
-    signer.verify(concatted, Signature(h_S, s_S), Point(SPK_S_x, SPK_S_y, signer.curve, True))
+    concatted =  int.from_bytes(SPK_S_x.to_bytes(32, byteorder='big') + SPK_S_y.to_bytes(32, byteorder='big'), byteorder='big')
+    signer.verify(concatted, Signature(h_S, s_S), IKey_Ser)
     
     print("STEP 4 DONE")
-  #  step5(SPK_Pr, SPK_S_x, SPK_S_y)
+    step5(SPK_Pr, Point(SPK_S_x, SPK_S_y, signer.curve, True))
 
 
-def step5(SPK_Pr, SPK_S_x, SPK_S_y):
-    T_x = (SPK_Pr * SPK_S_x) 
-    T_y = (SPK_Pr * SPK_S_y) 
-    print("T_x: ", T_x)
-    print("T_y: ", T_y)
-
-
-    U = b'CuriosityIsTheHMACKeyToCreativity' + T_y.to_bytes((T_y.bit_length()+7)//8, byteorder='big') + T_x.to_bytes((T_x.bit_length()+7)//8, byteorder='big')
-    print(U)
+def step5(SPK_Pr, SPK_S):
+    T = (SPK_Pr * SPK_S) 
+    U = b'CuriosityIsTheHMACKeyToCreativity' + T.y.to_bytes((T.y.bit_length()+7)//8, byteorder='big') + T.x.to_bytes((T.x.bit_length()+7)//8, byteorder='big')
     K = SHA3_256.new(U).digest()
-
 
     OTK_Pr = []
     OTK_Pub = []
@@ -168,22 +161,9 @@ def step5(SPK_Pr, SPK_S_x, SPK_S_y):
         hmac_i = HMAC.new(key=K, msg=concatted, digestmod=SHA256).hexdigest()
         HMACs.append(hmac_i)
         print(OTKReg(i, OTK_Pub_i.x, OTK_Pub_i.y, hmac_i))
-        break
 
 
+def start():
+    step1()
 
-SPK_S_x = 56639757923349849611343281406087185169440496922691141801327518124754702485302
-SPK_S_y = 60393615797913336386435708272243523005927060424158141789698645816131859206963
-h_S = 21621129333516383416415033250076862473303546494646545610293211657087856064840
-s_S = 73638652723800134909762146909643356402590833432990662757215424834350273257058
-
-SPK_Pr = 96781178905338882692128991514392085794127164657343499832134463045561619700020
-SPK_Pub = Point(20657832657563502899009328608755815246024178484769830595404327207056088688056, 41818993896524601909631861043247216085464697660955570721667917106157500659378, signer.curve, True)
-
-#step3()
-step4(SPK_S_x, SPK_S_y, h_S, s_S, SPK_Pr, SPK_Pub)
-
-#sign STUID
-#signature = signer.sign(stuID, IKey_Pr)
-#ResetSPK(signature.h, signature.s)
-
+start()
