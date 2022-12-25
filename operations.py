@@ -15,7 +15,7 @@ from Crypto.Util.Padding import unpad
 import random
 import re
 import json
-from signing import DigSig
+from signing import DigSig, Signature
 
 API_URL = 'http://10.92.55.4:5000'
 
@@ -26,8 +26,8 @@ IKey_Ser = 1.0 # dummy value # Use the values in the project description documen
 IKey_Pr = 1.0 # dummy value
 IKey_Pub = 1.0
 
-IKey_Pub_x = 0x67d8b1f5c27e23e8ab9a58b7654d026ca13aa8ba8e1e92c40aa093b77577a693
-IKey_Pub_y = 0xe721a2183c9b465d001d19d2e756c297176dacb9f53c559394e1aee25de1df8a
+IKey_Pub_x = 46971090604841360079922061551181542211820613641553712113849057601064265033363
+IKey_Pub_y = 104543692712201736351209024090219336184678725720224627814416251244961731829642
 
 IKey_Pr = 15190466278424233643069638666740506914852358611055143956296563220498701913495
 
@@ -93,61 +93,97 @@ def ResetOTK(h,s):
 
 
 signer = DigSig()
-# Registration of Identity Keys
-#IKey_Pr, IKey_Pub = signer.generate_keys()
-#signature = signer.sign(stuID, IKey_Pr)
-#IKRegReq(signature.h, signature.s, IKey_Pub.x, IKey_Pub.y)
+
+def step1():
+    # Registration of Identity Keys
+    IKey_Pr, IKey_Pub = signer.generate_keys()
+    signature = signer.sign(stuID, IKey_Pr)
+    IKRegReq(signature.h, signature.s, IKey_Pub.x, IKey_Pub.y)
+    print("IKey_Pr: ", IKey_Pr)
+    print("IKey_Pub.x: ", IKey_Pub.x)
+    print("IKey_Pub.y: ", IKey_Pub.y)
+
+    print("STEP 1 DONE")
+    step2()
+
+def step2():
+    # Verification of Identity Keys
+    code = input("Enter the code sent to your email: ")
+    IKRegVerify(int(code))
+
+    print("STEP 2 DONE")
+
+    step3()
+
+def step3():
+    # Registration of SPK
+    SPK_Pr, SPK_Pub = signer.generate_keys()
+    print("SPK_Pr: ", SPK_Pr)
+    print("SPK_Pub.x: ", SPK_Pub.x)
+    print("SPK_Pub.y: ", SPK_Pub.y)
+
+    concatted = int.from_bytes(SPK_Pub.x.to_bytes(32, byteorder='big') + SPK_Pub.y.to_bytes(32, byteorder='big'), byteorder='big')
+    signature_spk = signer.sign(concatted, IKey_Pr) 
+
+    SPK_S_x, SPK_S_y, h_S, s_S = SPKReg(signature_spk.h, signature_spk.s, SPK_Pub.x, SPK_Pub.y)
+    print("SPK_S_x: ", SPK_S_x)
+    print("SPK_S_y: ", SPK_S_y)
+    print("h_S: ", h_S)
+    print("s_S: ", s_S)
+
+    print("STEP 3 DONE")
+    step4(SPK_S_x, SPK_S_y, h_S, s_S, SPK_Pr, SPK_Pub)
 
 
-
-
-#Verification of Identity Keys
-#IKRegVerify(774776)
-
-
-
-
-# Registration of SPK
-#SPK_Pr, SPK_Pub = signer.generate_keys()
-#concatted = int.from_bytes(SPK_Pub.x.to_bytes(32, byteorder='big') + SPK_Pub.y.to_bytes(32, byteorder='big'), byteorder='big')
-#signature_spk = signer.sign(concatted, IKey_Pr)
-#SPK_S_x, SPK_S_y, h_S, s_S = SPKReg(signature_spk.h, signature_spk.s, SPK_Pub.x, SPK_Pub.y)
-#print("SPK_S_x: ", SPK_S_x)
-#print("SPK_S_y: ", SPK_S_y)
-#print("h_S: ", h_S)
-#print("s_S: ", s_S)
-
-SPK_S_x, SPK_S_y, h_S, s_S  = (56639757923349849611343281406087185169440496922691141801327518124754702485302, 60393615797913336386435708272243523005927060424158141789698645816131859206963, 110235389983263353264354483553323649982450696252564866551091996252800229873330, 6899407087835871525818865453449912461726247877860035085524895301935089518334)
-
-# UYARIUYARI After you check the validity ofthe signature ofSPKS.Pub, you may use it 
-#bu stepi yapmadim
-
-SPK_Pr = 28886565754216759207177581893985453110039657069970572445198802222912685475893
-SPK_Pub_x = 0x1617f71cfca2099f2f7f89a89d1d892943618c80b29408274b55ffe7c4790892
-SPK_Pub_y = 0x50b2c7d4f477903d66212a8e078e163be020b611297816b4286786d43a89f3c4
-
-
-T_x = (SPK_Pr * SPK_S_x) 
-T_y = (SPK_Pr * SPK_S_y) 
-
-U = b'CuriosityIsTheHMACKeyToCreativity' + T_y.to_bytes((T_y.bit_length()+7)//8, byteorder='big') + T_x.to_bytes((T_x.bit_length()+7)//8, byteorder='big')
-print(U)
-K = SHA3_256.new(U).digest()
-
-
-OTK_Pr = []
-OTK_Pub = []
-HMACs = []
-for i in range(10):
-    OTK_Pr_i, OTK_Pub_i = signer.generate_keys()
-    OTK_Pr.append(OTK_Pr_i)
-    OTK_Pub.append(OTK_Pub_i)
-    concatted = OTK_Pub_i.x.to_bytes((OTK_Pub_i.x.bit_length()+7)//8, byteorder='big') + OTK_Pub_i.y.to_bytes((OTK_Pub_i.y.bit_length()+7)//8, byteorder='big')
-    hmac_i = HMAC.new(key=K, msg=concatted, digestmod=SHA256).hexdigest()
-    HMACs.append(hmac_i)
-    print(OTKReg(i, OTK_Pub_i.x, OTK_Pub_i.y, hmac_i))
-    break
+#Verify SPK from server
+def step4(SPK_S_x, SPK_S_y, h_S, s_S, SPK_Pr, SPK_Pub):
+    # Verification of SPK
+    concatted = int.from_bytes(SPK_S_x.to_bytes((SPK_S_x.bit_length()+7)//8, byteorder='big') + SPK_S_y.to_bytes((SPK_S_y.bit_length()+7)//8, byteorder='big'), byteorder='big')
+    signer.verify(concatted, Signature(h_S, s_S), Point(SPK_S_x, SPK_S_y, signer.curve, True))
     
+    print("STEP 4 DONE")
+  #  step5(SPK_Pr, SPK_S_x, SPK_S_y)
 
 
+def step5(SPK_Pr, SPK_S_x, SPK_S_y):
+    T_x = (SPK_Pr * SPK_S_x) 
+    T_y = (SPK_Pr * SPK_S_y) 
+    print("T_x: ", T_x)
+    print("T_y: ", T_y)
+
+
+    U = b'CuriosityIsTheHMACKeyToCreativity' + T_y.to_bytes((T_y.bit_length()+7)//8, byteorder='big') + T_x.to_bytes((T_x.bit_length()+7)//8, byteorder='big')
+    print(U)
+    K = SHA3_256.new(U).digest()
+
+
+    OTK_Pr = []
+    OTK_Pub = []
+    HMACs = []
+    for i in range(10):
+        OTK_Pr_i, OTK_Pub_i = signer.generate_keys()
+        OTK_Pr.append(OTK_Pr_i)
+        OTK_Pub.append(OTK_Pub_i)
+        concatted = OTK_Pub_i.x.to_bytes((OTK_Pub_i.x.bit_length()+7)//8, byteorder='big') + OTK_Pub_i.y.to_bytes((OTK_Pub_i.y.bit_length()+7)//8, byteorder='big')
+        hmac_i = HMAC.new(key=K, msg=concatted, digestmod=SHA256).hexdigest()
+        HMACs.append(hmac_i)
+        print(OTKReg(i, OTK_Pub_i.x, OTK_Pub_i.y, hmac_i))
+        break
+
+
+
+SPK_S_x = 56639757923349849611343281406087185169440496922691141801327518124754702485302
+SPK_S_y = 60393615797913336386435708272243523005927060424158141789698645816131859206963
+h_S = 21621129333516383416415033250076862473303546494646545610293211657087856064840
+s_S = 73638652723800134909762146909643356402590833432990662757215424834350273257058
+
+SPK_Pr = 96781178905338882692128991514392085794127164657343499832134463045561619700020
+SPK_Pub = Point(20657832657563502899009328608755815246024178484769830595404327207056088688056, 41818993896524601909631861043247216085464697660955570721667917106157500659378, signer.curve, True)
+
+#step3()
+step4(SPK_S_x, SPK_S_y, h_S, s_S, SPK_Pr, SPK_Pub)
+
+#sign STUID
+#signature = signer.sign(stuID, IKey_Pr)
+#ResetSPK(signature.h, signature.s)
 
