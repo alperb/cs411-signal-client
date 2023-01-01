@@ -185,53 +185,73 @@ class SignalClient(object):
         self.save_otks()
     
     def generate_session_key(self, otk_idx: int, ephemeral_key: Point):
-        t = ephemeral_key * self.otk['privates'][otk_idx]
+        t = self.otk['privates'][otk_idx] * ephemeral_key
         u = self.__to_bytes(t.x) + self.__to_bytes(t.y) + b'ToBeOrNotToBe'
         return SHA3_256.new(u).digest()
 
     def generate_kdf(self, key: bytes):
-        t = key + b"ToBeOrNotToBe"
+        t = key + b'YouTalkingToMe'
         k_enc = SHA3_256.new(t).digest()
 
-        t_mac = key + k_enc + b"YouCannotHandleTheTruth"
+        t_mac = key + k_enc + b'YouCannotHandleTheTruth'
         k_mac = SHA3_256.new(t_mac).digest()
 
-        t_next = k_enc + k_mac + b"MayTheForceBeWithYou"
+        t_next = k_enc + k_mac + b'MayTheForceBeWithYou'
         k_next = SHA3_256.new(t_next).digest()
 
         return k_enc, k_mac, k_next
     
-    def decrypt_message(self, message: bytes, key: bytes):
+    def decrypt_message(self, message: bytes, key: bytes, nonce):
         # TODO: Bilgehan burayi yapsan tamamiz
-        cipher = AES.new(key, AES.MODE_CTR)
-        plaintext = cipher.decrypt(message.to_bytes((message.bit_length()+7)//8, byteorder='big'))
+        cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
+        plaintext = cipher.decrypt(message)
         return plaintext
 
     def fetch_message(self):
         self.__send_psuedo_message()
         k_next = None
+        messages = []
 
         print('-------FETCHING MESSAGES-------\n')
 
         for i in range(5):
+
             m = self.__request_message()
             mid = m['message_id']
             print(f'\n -------RECEIVED MESSAGE { mid }-------\n')
 
-            session_key = self.generate_session_key( m['otk'], Point(m['ek']['x'], m['ek']['y'], self.digital_signature.curve) )
             if k_next is None:
+                session_key = self.generate_session_key( m['otk'], Point(m['ek']['x'], m['ek']['y'], self.digital_signature.curve) )
                 kdf_enc, kdf_mac, kdf_next = self.generate_kdf(session_key)
             else:
                 kdf_enc, kdf_mac, kdf_next = self.generate_kdf(k_next)
 
             k_next = kdf_next
+            nnn = m['message'].to_bytes((m['message'].bit_length()+7)//8, byteorder='big')
+            nonce = nnn[:8]
+            message = nnn[8:-32]
+            mac = nnn[-32:]
 
-            decrypted = self.decrypt_message(m['message'], kdf_enc)
+            decrypted = self.decrypt_message(message, kdf_enc, nonce).decode()
 
-            print(f"Received message: {m['message']}\n")
-            print(f"Decrypted message: {decrypted}\n")
-            print(f'kdf_enc: {kdf_enc}\n')
-            print(f'kdf_mac: {kdf_mac}\n')
+            # Calculate MAC with SHA2 256
+            h = HMAC.new(kdf_mac, message, digestmod=SHA256).digest()
+            if mac == h:
+                self.__send_decrypted_message(int(m['message_id']), decrypted, int(m['sender']))
+                messages.append({"id": int(m['message_id']), "message": decrypted, "sender": int(m['sender'])})
+            else:
+                self.__send_decrypted_message(int(m['message_id']), 'INVALIDHMAC', int(m['sender']))
+
+        deleted = self.__get_deleted_message()
+
+        for message in messages:
+            mid = message['id']
+            sender = message['sender']
+            m = message['message']
+            if mid not in deleted:
+                print(f'Message { mid } - {m} - Read')
+            else:
+                print(f'Message { mid } - Was deleted by sender - X')
     
     # Helper functions
 
@@ -253,6 +273,18 @@ class SignalClient(object):
             json.dump(jsonized, f)
 
     # Client functions provided by the instructor
+
+    def __get_deleted_message(self):
+        signature = self.digital_signature.sign(self.student_id, self.keys['private'])
+        mes = {'ID': self.student_id, 'H': signature.h, 'S': signature.s}
+        response = requests.get('{}/{}'.format(API_URL, "ReqDelMsgs"), json = mes)	
+        if (response.ok) == True:
+            return response.json()['MSGID']
+
+    def __send_decrypted_message(self, mid: int, message: str, sender: int):
+        mes = {'IDA': self.student_id, 'IDB': sender, 'MSGID': mid, 'DECMSG': message}
+        response = requests.put('{}/{}'.format(API_URL, "Checker"), json = mes)		
+        print(response.json())
 
     def __request_message(self):
         signature = self.digital_signature.sign(self.student_id, self.keys['private'])
