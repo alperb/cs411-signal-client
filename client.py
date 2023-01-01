@@ -1,13 +1,15 @@
 import random
 from ecpy.curves import Curve, Point
 from Crypto.Hash import SHA3_256, HMAC, SHA256
+from Crypto.Cipher import AES
 from Crypto import Random
 import math
 import requests
 import json
 import sys
 
-API_URL = 'http://10.92.55.4:5000'
+# API_URL = 'http://10.92.55.4:5000'
+API_URL = 'http://10.92.52.255:5000'
 
 class Keys(object):
     def __init__(self, public, private):
@@ -84,12 +86,16 @@ class SignalClient(object):
 
         self.presigned_keys = self.digital_signature.generate_keys()
     
-    def start(self):
+    def register(self):
         self.register_identity()
         self.verify_server_code()
+
+    def start(self):
         self.register_presigned_keys()
         self.verify_spk_from_server()
         self.generate_otk()
+
+        
 
     def register_presigned_keys(self):
         concatted = int.from_bytes(
@@ -178,6 +184,55 @@ class SignalClient(object):
         self.__register_one_time_keys()
         self.save_otks()
     
+    def generate_session_key(self, otk_idx: int, ephemeral_key: Point):
+        t = ephemeral_key * self.otk['privates'][otk_idx]
+        u = self.__to_bytes(t.x) + self.__to_bytes(t.y) + b'ToBeOrNotToBe'
+        return SHA3_256.new(u).digest()
+
+    def generate_kdf(self, key: bytes):
+        t = key + b"ToBeOrNotToBe"
+        k_enc = SHA3_256.new(t).digest()
+
+        t_mac = key + k_enc + b"YouCannotHandleTheTruth"
+        k_mac = SHA3_256.new(t_mac).digest()
+
+        t_next = k_enc + k_mac + b"MayTheForceBeWithYou"
+        k_next = SHA3_256.new(t_next).digest()
+
+        return k_enc, k_mac, k_next
+    
+    def decrypt_message(self, message: bytes, key: bytes):
+        # TODO: Bilgehan burayi yapsan tamamiz
+        cipher = AES.new(key, AES.MODE_CTR)
+        plaintext = cipher.decrypt(message.to_bytes((message.bit_length()+7)//8, byteorder='big'))
+        return plaintext
+
+    def fetch_message(self):
+        self.__send_psuedo_message()
+        k_next = None
+
+        print('-------FETCHING MESSAGES-------\n')
+
+        for i in range(5):
+            m = self.__request_message()
+            mid = m['message_id']
+            print(f'\n -------RECEIVED MESSAGE { mid }-------\n')
+
+            session_key = self.generate_session_key( m['otk'], Point(m['ek']['x'], m['ek']['y'], self.digital_signature.curve) )
+            if k_next is None:
+                kdf_enc, kdf_mac, kdf_next = self.generate_kdf(session_key)
+            else:
+                kdf_enc, kdf_mac, kdf_next = self.generate_kdf(k_next)
+
+            k_next = kdf_next
+
+            decrypted = self.decrypt_message(m['message'], kdf_enc)
+
+            print(f"Received message: {m['message']}\n")
+            print(f"Decrypted message: {decrypted}\n")
+            print(f'kdf_enc: {kdf_enc}\n')
+            print(f'kdf_mac: {kdf_mac}\n')
+    
     # Helper functions
 
     def __to_bytes(self, n):
@@ -198,6 +253,29 @@ class SignalClient(object):
             json.dump(jsonized, f)
 
     # Client functions provided by the instructor
+
+    def __request_message(self):
+        signature = self.digital_signature.sign(self.student_id, self.keys['private'])
+        mes = {'ID': self.student_id, 'H': signature.h, 'S': signature.s}
+        response = requests.get('{}/{}'.format(API_URL, "ReqMsg"), json = mes)	
+        if (response.ok) == True: 
+            res = response.json()
+            return {
+                "sender": res["IDB"],
+                "message": res["MSG"],
+                "message_id": res["MSGID"],
+                "ek": {
+                    "x": res["EK.X"],
+                    "y": res["EK.Y"]
+                },
+                "otk": res['OTKID']
+            }
+
+    def __send_psuedo_message(self):
+        signature = self.digital_signature.sign(self.student_id, self.keys['private'])
+        mes = {'ID': self.student_id, 'H': signature.h, 'S': signature.s}
+        response = requests.put('{}/{}'.format(API_URL, "PseudoSendMsg"), json = mes)		
+        print(response.json())
 
     def reset_otks(self):
         signature = self.digital_signature.sign(self.student_id, self.keys['private'])
@@ -314,4 +392,4 @@ P: {key_pairs['private']}
 
     client = SignalClient(student_id, key_pairs)
     client.start()
-    # client.reset_otks()
+    client.fetch_message()
