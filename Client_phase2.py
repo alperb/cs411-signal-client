@@ -1,15 +1,12 @@
-import os
 import random
-import time
-import math
-import requests
-import json
-import sys
-
 from ecpy.curves import Curve, Point
 from Crypto.Hash import SHA3_256, HMAC, SHA256
 from Crypto.Cipher import AES
 from Crypto import Random
+import math
+import requests
+import json
+import sys
 
 # API_URL = 'http://10.92.55.4:5000'
 API_URL = 'http://10.92.52.255:5000'
@@ -29,15 +26,6 @@ class Signature:
 
     def __str__(self):
         return f"<Signature => h: {self.h}, s: {self.s}>"
-
-class OTK(object):
-    def __init__(self, id, x, y):
-        self.id = id
-        self.x = x
-        self.y = y
-    
-    def get_point(self):
-        return Point(self.x, self.y, Curve.get_curve('secp256k1'))
 
 # DigitalSignature
 # Handles the signing and verification of messages
@@ -80,57 +68,6 @@ class DigitalSignature:
     def __to_bytes(self, n):
         return n.to_bytes((n.bit_length()+7)//8, byteorder='big')
 
-class SessionContext(object):
-    def __init__(self, student_id: int, to: int, ephemeral_key: Keys, receiver_otk: OTK, session_key: bytes):
-        self.student_id = student_id
-        self.to = to
-        self.ephemeral_key = ephemeral_key
-        self.receiver_otk = receiver_otk
-        self.session_key = session_key
-
-        self.message_id = 1
-    
-    def send_message(self, message: str):
-        kdf_enc, kdf_mac, kdf_next = self.__generate_kdf(self.session_key)
-
-        nonce = os.urandom(8)
-        cipher = AES.new(kdf_enc, AES.MODE_CTR, nonce=nonce)
-        ciphertext = cipher.encrypt(message.encode())
-        hmac = HMAC.new(kdf_mac, ciphertext, digestmod=SHA256).digest()
-
-        concatted = int.from_bytes(
-            nonce +
-            ciphertext +
-            hmac
-        , byteorder='big')
-
-        self.__send_message_request(concatted)
-
-    def __generate_kdf(self, key: bytes):
-        t = key + b'YouTalkingToMe'
-        k_enc = SHA3_256.new(t).digest()
-
-        t_mac = key + k_enc + b'YouCannotHandleTheTruth'
-        k_mac = SHA3_256.new(t_mac).digest()
-
-        t_next = k_enc + k_mac + b'MayTheForceBeWithYou'
-        k_next = SHA3_256.new(t_next).digest()
-
-        return k_enc, k_mac, k_next
-    
-    def __send_message_request(self, concatted: int):
-        mes = {
-            "IDA": self.student_id, 
-            "IDB": self.to, 
-            "OTKID": int(self.receiver_otk.id), 
-            "MSGID": int(self.message_id), 
-            "MSG": concatted, 
-            "EK.X": self.ephemeral_key.public.x, 
-            "EK.Y": self.ephemeral_key.public.y
-        }
-        response = requests.put('{}/{}'.format(API_URL, "SendMSG"), json=mes)
-        print(response.json()) 
-
 class SignalClient(object):
     def __init__(self, student_id: int, keys: dict[str, str]):
         self.student_id = student_id
@@ -157,7 +94,8 @@ class SignalClient(object):
         self.register_presigned_keys()
         self.verify_spk_from_server()
         self.generate_otk()
-     
+
+        
 
     def register_presigned_keys(self):
         concatted = int.from_bytes(
@@ -250,14 +188,6 @@ class SignalClient(object):
         t = self.otk['privates'][otk_idx] * ephemeral_key
         u = self.__to_bytes(t.x) + self.__to_bytes(t.y) + b'ToBeOrNotToBe'
         return SHA3_256.new(u).digest()
-    
-    def generate_session_key_from(self, otk: OTK, ephemeral_key: Keys):
-        t = otk.get_point() * ephemeral_key.private
-        u = self.__to_bytes(t.x) + self.__to_bytes(t.y) + b'ToBeOrNotToBe'
-        return SHA3_256.new(u).digest()
-    
-    def generate_ephemeral_key(self):
-        return self.digital_signature.generate_keys()
 
     def generate_kdf(self, key: bytes):
         t = key + b'YouTalkingToMe'
@@ -272,11 +202,13 @@ class SignalClient(object):
         return k_enc, k_mac, k_next
     
     def decrypt_message(self, message: bytes, key: bytes, nonce):
+        # TODO: Bilgehan burayi yapsan tamamiz
         cipher = AES.new(key, AES.MODE_CTR, nonce=nonce)
         plaintext = cipher.decrypt(message)
         return plaintext
 
     def fetch_message(self):
+        self.__send_psuedo_message()
         k_next = None
         messages = []
 
@@ -285,7 +217,6 @@ class SignalClient(object):
         for i in range(5):
 
             m = self.__request_message()
-            print(f'Received message: {m}')
             mid = m['message_id']
             print(f'\n -------RECEIVED MESSAGE { mid }-------\n')
 
@@ -301,17 +232,15 @@ class SignalClient(object):
             message = nnn[8:-32]
             mac = nnn[-32:]
 
-            decrypted = self.decrypt_message(message, kdf_enc, nonce)
-            print(f'Decrypted message: {decrypted}')
-            decrypted = decrypted.decode('utf-8')
+            decrypted = self.decrypt_message(message, kdf_enc, nonce).decode()
 
             # Calculate MAC with SHA2 256
             h = HMAC.new(kdf_mac, message, digestmod=SHA256).digest()
             if mac == h:
-                #self.__send_decrypted_message(int(m['message_id']), decrypted, int(m['sender']))
+                self.__send_decrypted_message(int(m['message_id']), decrypted, int(m['sender']))
                 messages.append({"id": int(m['message_id']), "message": decrypted, "sender": int(m['sender'])})
-            #else:
-            #   self.__send_decrypted_message(int(m['message_id']), 'INVALIDHMAC', int(m['sender']))
+            else:
+                self.__send_decrypted_message(int(m['message_id']), 'INVALIDHMAC', int(m['sender']))
 
         deleted = self.__get_deleted_message()
 
@@ -323,25 +252,7 @@ class SignalClient(object):
                 print(f'Message { mid } - {m} - Read')
             else:
                 print(f'Message { mid } - Was deleted by sender - X')
-        
-        return messages
     
-    def create_session(self, to: int):
-        ephemeral = self.generate_ephemeral_key()
-        otk_of_receiver = self.__request_otk_of(to)
-        if not otk_of_receiver:
-            return None
-        print(f'OTK of {to} is {otk_of_receiver}')
-        session_key = self.generate_session_key_from(otk_of_receiver, ephemeral)
-
-        return SessionContext(self.student_id, to, ephemeral, otk_of_receiver, session_key)
-
-    def send_message(self, ctx: SessionContext, message: str):
-        ctx.send_message(message)
-        return ctx
-    
-    def check_status(self):
-        return self.__check_status()
     # Helper functions
 
     def __to_bytes(self, n):
@@ -362,27 +273,6 @@ class SignalClient(object):
             json.dump(jsonized, f)
 
     # Client functions provided by the instructor
-
-    def __check_status(self):
-        signature = self.digital_signature.sign(self.student_id, self.keys['private'])
-        mes = {'ID': self.student_id, 'H': signature.h, 'S': signature.s}
-        response = requests.get('{}/{}'.format(API_URL, "Status"), json = mes)
-        if (response.ok == True):
-            res = response.json()
-            return res['numMSG'], res['numOTK'], res['StatusMSG']
-        else:
-            return False
-
-    def __request_otk_of(self, sid):
-        signature = self.digital_signature.sign(sid, self.keys['private'])
-        mes = {'IDA': self.student_id, 'IDB': sid, 'H': signature.h, 'S': signature.s}
-        response = requests.get('{}/{}'.format(API_URL, "ReqOTK"), json = mes)
-        if (response.ok) == True:
-            res = response.json()
-            return OTK(res['KEYID'], res['OTK.X'], res['OTK.Y'])
-        else:
-            print(response.json())
-            return False
 
     def __get_deleted_message(self):
         signature = self.digital_signature.sign(self.student_id, self.keys['private'])
@@ -412,10 +302,8 @@ class SignalClient(object):
                 },
                 "otk": res['OTKID']
             }
-        else:
-            return None
 
-    def send_psuedo_message(self):
+    def __send_psuedo_message(self):
         signature = self.digital_signature.sign(self.student_id, self.keys['private'])
         mes = {'ID': self.student_id, 'H': signature.h, 'S': signature.s}
         response = requests.put('{}/{}'.format(API_URL, "PseudoSendMsg"), json = mes)		
@@ -484,17 +372,6 @@ class SignalClient(object):
             res = response.json()
             return True, res
 
-def lifecycle(client: SignalClient):
-    num_messages, otks_left, msg = client.check_status()
-    print(msg)
-
-    if num_messages > 0:
-        client.fetch_message()
-
-    if otks_left <= 0:
-        # client.reset_otks()
-        client.register_one_time_keys()
-
 if __name__ == '__main__':
 
     key_pairs = {
@@ -545,36 +422,6 @@ P: {key_pairs['private']}
         f.close()
         print('Keys written to `keys.txt` successfully.')
 
-    bilgehan_no = 27846
-    psuedo_id = 26045
-
     client = SignalClient(student_id, key_pairs)
     client.start()
-
-    # registers the ik and spk with the server
-    # client.register()
-
-    # get psuedo messages sent by the server
-    client.send_psuedo_message()
-
-    messages = client.fetch_message()
-
-    # sending back all the valid messages back to psuedo-client
-    ctx = client.create_session(28366)
-    if not ctx:
-        print(f'Failed to create session with client.')
-        exit(1)
-    for m in messages:
-        ctx.send_message(m['message'])
-
-    # lifecycle init
-    # last_t = time.time()
-    # while True:
-    #     if time.time() - last_t > 5:
-    #         # if random.randint(0, 1):
-    #         client.send_psuedo_message()
-
-    #         lifecycle(client)
-    #         last_t = time.time()
-
-    
+    client.fetch_message()
