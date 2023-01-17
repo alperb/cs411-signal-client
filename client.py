@@ -11,8 +11,7 @@ from Crypto.Hash import SHA3_256, HMAC, SHA256
 from Crypto.Cipher import AES
 from Crypto import Random
 
-# API_URL = 'http://10.92.55.4:5000'
-API_URL = 'http://10.92.52.255:5000'
+API_URL = 'http://10.92.55.4:5000'
 
 class Keys(object):
     def __init__(self, public, private):
@@ -152,11 +151,12 @@ class SignalClient(object):
     def register(self):
         self.register_identity()
         self.verify_server_code()
-
-    def start(self):
         self.register_presigned_keys()
         self.verify_spk_from_server()
         self.generate_otk()
+
+    def start(self):
+        self.read_otks()
      
 
     def register_presigned_keys(self):
@@ -282,10 +282,11 @@ class SignalClient(object):
 
         print('-------FETCHING MESSAGES-------\n')
 
-        for i in range(5):
+        while True:
 
             m = self.__request_message()
-            print(f'Received message: {m}')
+            if not m:
+                break
             mid = m['message_id']
             print(f'\n -------RECEIVED MESSAGE { mid }-------\n')
 
@@ -302,7 +303,6 @@ class SignalClient(object):
             mac = nnn[-32:]
 
             decrypted = self.decrypt_message(message, kdf_enc, nonce)
-            print(f'Decrypted message: {decrypted}')
             decrypted = decrypted.decode('utf-8')
 
             # Calculate MAC with SHA2 256
@@ -310,8 +310,6 @@ class SignalClient(object):
             if mac == h:
                 #self.__send_decrypted_message(int(m['message_id']), decrypted, int(m['sender']))
                 messages.append({"id": int(m['message_id']), "message": decrypted, "sender": int(m['sender'])})
-            #else:
-            #   self.__send_decrypted_message(int(m['message_id']), 'INVALIDHMAC', int(m['sender']))
 
         deleted = self.__get_deleted_message()
 
@@ -331,7 +329,6 @@ class SignalClient(object):
         otk_of_receiver = self.__request_otk_of(to)
         if not otk_of_receiver:
             return None
-        print(f'OTK of {to} is {otk_of_receiver}')
         session_key = self.generate_session_key_from(otk_of_receiver, ephemeral)
 
         return SessionContext(self.student_id, to, ephemeral, otk_of_receiver, session_key)
@@ -360,6 +357,19 @@ class SignalClient(object):
                     'Y': self.otk['public'][i].y.to_bytes(32, byteorder='big').hex()
                 })
             json.dump(jsonized, f)
+        
+    def read_otks(self):
+        with open('otk.json', 'r') as f:
+            self.otk = json.load(f)
+            for i in range(len(self.otk['privates'])):
+                self.otk['privates'][i] = int.from_bytes(bytes.fromhex(self.otk['privates'][i]), byteorder='big')
+            for i in range(len(self.otk['public'])):
+                self.otk['public'][i] = Point(
+                    int.from_bytes(bytes.fromhex(self.otk['public'][i]['X']), byteorder='big'),
+                    int.from_bytes(bytes.fromhex(self.otk['public'][i]['Y']), byteorder='big'),
+                    self.digital_signature.curve
+                )
+        print(self.otk)
 
     # Client functions provided by the instructor
 
@@ -402,6 +412,7 @@ class SignalClient(object):
         response = requests.get('{}/{}'.format(API_URL, "ReqMsg"), json = mes)	
         if (response.ok) == True: 
             res = response.json()
+            print(res)
             return {
                 "sender": res["IDB"],
                 "message": res["MSG"],
@@ -484,25 +495,15 @@ class SignalClient(object):
             res = response.json()
             return True, res
 
-def lifecycle(client: SignalClient):
-    num_messages, otks_left, msg = client.check_status()
-    print(msg)
-
-    if num_messages > 0:
-        client.fetch_message()
-
-    if otks_left <= 0:
-        # client.reset_otks()
-        client.register_one_time_keys()
-
 if __name__ == '__main__':
 
+    # Public and private keys
     key_pairs = {
         'public': {
-            'x': 28701497367022640130289250537955896782099551696302755325877744682765078207895, 
-            'y': 49339270188151535272034630999877713185302890512909296793540204079034592545843
+            'x': 89897491541447362280560858232937117506845597473304053345085453511818452134240, 
+            'y': 104889529118147695129117292097117733292273420935000879173869799576866952013590
         },
-        'private': 50500477941066129494398694676172446863075332062335879609003429255992907483088
+        'private': 95336075571880778169962111676182110626057541902580027651120072588122040526823
     }
 
     if len(sys.argv) < 2:
@@ -511,7 +512,8 @@ if __name__ == '__main__':
 
     student_id = int(sys.argv[1])
 
-    if len(sys.argv) > 2:
+    # Reset keys if requested with --generate flag
+    if len(sys.argv) > 2 and sys.argv[2] == '--generate':
         rcode = int(input('Please enter your recovery code: '))
         mes = { 'ID': student_id, 'RCODE': rcode }
         print('Resetting current keys...')
@@ -522,6 +524,7 @@ if __name__ == '__main__':
             exit(1)
         else:
             print('Keys reset successfully.')
+
         # Generate new keys
         print(f'Generating new keys for student {student_id}...')
         digsig = DigitalSignature()
@@ -544,37 +547,52 @@ P: {key_pairs['private']}
         f.write(s)
         f.close()
         print('Keys written to `keys.txt` successfully.')
-
-    bilgehan_no = 27846
-    psuedo_id = 26045
+        exit(0)
 
     client = SignalClient(student_id, key_pairs)
+    
+    # registers the ik and spk with the server
+    # registers presigned keys with the server
+    # only necessary if the keys are not registered
+    client.register()
+
+    # starts the client
+    # verifies servers spk
+    # reads otk's from local file
     client.start()
 
-    # registers the ik and spk with the server
-    # client.register()
 
-    # get psuedo messages sent by the server
-    client.send_psuedo_message()
+    ## make psuedo-client send you 5 messages
+    # client.send_psuedo_message()
 
-    messages = client.fetch_message()
+    ## fetch messages from server (max 10)
+    # messages = client.fetch_message()
 
-    # sending back all the valid messages back to psuedo-client
-    ctx = client.create_session(28366)
-    if not ctx:
-        print(f'Failed to create session with client.')
-        exit(1)
-    for m in messages:
-        ctx.send_message(m['message'])
+    ## create a session with the receiver client
+    # ctx = client.create_session(26045)
+    # # Sending a message to the user.
+    # ctx.send_message('Hello from alper3!')
+    # ctx.send_message('Hello from alper4!')
 
-    # lifecycle init
-    # last_t = time.time()
-    # while True:
-    #     if time.time() - last_t > 5:
-    #         # if random.randint(0, 1):
-    #         client.send_psuedo_message()
-
-    #         lifecycle(client)
-    #         last_t = time.time()
+    # if not ctx:
+    #     print(f'Failed to create session with client.')
+    #     exit(1)
 
     
+    ## sending back all the valid messages back to psuedo-client
+    # for m in messages:
+    #     print(m)
+        #ctx.send_message(m['message'])
+    
+
+    ## reset otks
+    # client.reset_otks()
+
+    ## check otk status
+    # msgs, otks, text = client.check_status()
+    # print(text)
+    # print(f'You have {otks} OTKs left.')
+    # print(f'You have {msgs} messages in your inbox.')
+    # if otks == 0:
+    #     print('You have no OTKs left. Registering new OTKs...')
+    #     client.generate_otk()
